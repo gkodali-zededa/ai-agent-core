@@ -1,0 +1,32 @@
+[project]
+name = "zededa-client"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "anthropic>=0.51.0",
+    "mcp>=1.8.1",
+    "python-dotenv>=1.1.0",
+    "fastapi>=0.111.0",  # Or the specific version you installed
+    "uvicorn[standard]>=0.29.0", # Added uvicorn
+    "websockets>=11.0", # Explicitly add websockets
+    "httpcore>=0.15.0", # Add httpcore
+    "certifi>=2023.7.22", # Add certifi
+    "click>=8.0.0", # Explicitly add click
+    "h11>=0.14.0", # Explicitly add h11
+    "starlette>=0.37.2", # Explicitly add starlette
+    "pydantic>=2.0.0", # Explicitly add pydantic
+    "httpx>=0.27.0", # Added httpx
+    "httpx-sse>=0.4.0", # Added httpx-sse
+    "pydantic-core>=2.14.0", # Explicitly add pydantic-core
+    "typing-extensions>=4.7.0", # Explicitly add typing-extensions
+    "typing-inspection>=0.4.0", # Explicitly add typing-inspection
+    "annotated-types>=0.6.0", # Explicitly add annotated-types
+    "anyio>=4.0.0", # Explicitly add anyio
+    "sniffio>=1.3.0", # Explicitly add sniffio
+    "idna>=3.0.0", # Explicitly add idna
+    "pydantic-settings>=2.0.0", # Explicitly add pydantic-settings
+    "sse-starlette>=2.0.0", # Explicitly add sse-starlette
+    "distro>=1.9.0", # Explicitly add distro
+]
