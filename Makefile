@@ -1,6 +1,8 @@
 IMAGE_NAME := zededa-ai-agent
 CONTAINER_NAME := zededa-ai-agent-container
 
+ZEDEDA_BEARER_TOKEN ?= "dummy_token_for_dev_only"
+
 .PHONY: build run clean
 
 # Target to build the Docker image
@@ -16,7 +18,7 @@ run:
 	@# Stop and remove container if it already exists to prevent conflicts
 	-docker stop $(CONTAINER_NAME) > /dev/null 2>&1 || true
 	-docker rm $(CONTAINER_NAME) > /dev/null 2>&1 || true
-	docker run -d -p 8000:8000 --name $(CONTAINER_NAME) $(IMAGE_NAME)
+	docker run -d -p 8000:8000 -e ZEDEDA_BEARER_TOKEN='$(ZEDEDA_BEARER_TOKEN)' --name $(CONTAINER_NAME) $(IMAGE_NAME)
 	@echo "Container $(CONTAINER_NAME) started. To see logs, run: docker logs $(CONTAINER_NAME)"
 
 logs:
