@@ -7,8 +7,8 @@ from mcp.server.fastmcp import FastMCP
 mcp = FastMCP("zededa")
 
 # Constants
-raw_token = os.environ.get("ZEDEDA_BEARER_TOKEN", "").strip()
-if not raw_token:
+raw_token = os.environ.get("ZEDEDA_BEARER_TOKEN")
+if raw_token is None:
     raise ValueError("Error: ZEDEDA_BEARER_TOKEN environment variable not set.")
 if not raw_token.startswith("Bearer "):
     BEARER_TOKEN = "Bearer " + raw_token
