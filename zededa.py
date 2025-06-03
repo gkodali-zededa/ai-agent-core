@@ -1,13 +1,21 @@
 from typing import Any, Optional
 import httpx
+import os
 from mcp.server.fastmcp import FastMCP
 
 # Initialize FastMCP server
 mcp = FastMCP("zededa")
 
 # Constants
-BEARER_TOKEN = "Bearer 2kvt-qm9KjmSg-7ZUSEaIu8JOBDglMEv0_ph_MMqWpDQVD5Hrky4xmDbzjn7mz0pA3E9taW17VHUS8VP-29IS8iDVB0IniV5Xk096zVOAtpclnX6XQPuROzS1K_3AzPUxrOu9D2rthho-krAXdWWrhwWYG1RWpQGqjn1meg33pA="
-ZEDEDA_API_BASE = "https://zedcontrol.local.zededa.net"
+raw_token = os.environ.get("ZEDEDA_BEARER_TOKEN")
+if raw_token is None:
+    raise ValueError("Error: ZEDEDA_BEARER_TOKEN environment variable not set.")
+if not raw_token.startswith("Bearer "):
+    BEARER_TOKEN = "Bearer " + raw_token
+else:
+    BEARER_TOKEN = raw_token
+
+ZEDEDA_API_BASE = os.environ.get("ZEDEDA_API_BASE_URL", "https://zedcontrol.local.zededa.net")
 USER_AGENT = "zededa-ai-bot/1.0"
 
 # change the following function to take http verb as an argument
@@ -251,7 +259,10 @@ async def get_zededa_app_instance_status_from_id(app_instance_id: str) -> dict[s
     """Get the status of a specific app instance from Zededa by it's id."""
     url = f"{ZEDEDA_API_BASE}/api/v1/apps/instances/id/{app_instance_id}/status"
     response = await make_zededa_request(url, "get")
-    #return format_app_instance(response)
+    # format_app_instance is not used here as the status endpoint response
+    # might not be a full app instance object compatible with the formatter.
+    # Returning raw JSON provides more flexibility.
+    # return format_app_instance(response) 
     return response
 
 @mcp.tool()
