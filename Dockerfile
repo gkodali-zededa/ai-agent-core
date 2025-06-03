@@ -16,7 +16,7 @@ COPY pyproject.toml uv.lock ./
 
 # Install project dependencies using uv
 # --no-cache can be used if you want to minimize layer size, uv handles caching efficiently.
-RUN uv pip sync --no-cache-dir --system ./pyproject.toml
+RUN uv sync --no-cache
 
 # Copy the application code into the container
 # Copy the main application package
@@ -33,4 +33,5 @@ ENV PYTHONUNBUFFERED=1
 # Run app.main:app when the container launches
 # The command assumes zededa_server_app.main contains your FastAPI app instance
 # and zededa.py is in the WORKDIR (/app)
-CMD ["uvicorn", "--host", "0.0.0.0", "zededa_server_app.main:app", "--port", "8000"]
+# Use uv to run uvicorn from the virtual environment
+CMD ["uv", "run", "uvicorn", "--host", "0.0.0.0", "zededa_server_app.main:app", "--port", "8000"]

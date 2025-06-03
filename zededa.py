@@ -2,6 +2,10 @@ from typing import Any, Optional
 import httpx
 import os
 from mcp.server.fastmcp import FastMCP
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Initialize FastMCP server
 mcp = FastMCP("zededa")

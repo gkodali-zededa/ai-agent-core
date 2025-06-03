@@ -4,6 +4,11 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 import os
 import logging
 
+from dotenv import load_dotenv
+
+# Load environment variables from .env file if it exists
+load_dotenv()
+
 # Import ADKOrchestrator instead of MCPClient
 from .adk_orchestrator import ADKOrchestrator
 # MCPClient might still be needed if there are other non-websocket uses,
