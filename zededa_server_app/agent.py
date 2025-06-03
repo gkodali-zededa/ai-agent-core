@@ -1,6 +1,6 @@
 import asyncio
 import os
-from typing import Optional
+from typing import Optional, List, Dict, Any, Tuple # Keep Tuple if other functions might use it
 from contextlib import AsyncExitStack
 
 from mcp import ClientSession, StdioServerParameters
@@ -9,27 +9,58 @@ from mcp.client.stdio import stdio_client
 from anthropic import Anthropic
 from dotenv import load_dotenv
 
-from .supervisor_prompt import validate_data_with_claude, conforms_to_guidelines
+# supervisor_prompt functions are used by ADKOrchestrator directly
+# from .supervisor_prompt import validate_data_with_claude, conforms_to_guidelines
 
 load_dotenv()  # load environment variables from .env
 
+
+# ADK_LLM_REFACTOR: The following functions `_process_claude_response` and
+# `process_query_logic` are now conceptually integrated into
+# `ADKOrchestrator.handle_user_query`. They are commented out here.
+
+# async def _process_claude_response(
+#     claude_response_obj: Any,
+#     anthropic_client: Anthropic,
+#     mcp_session: ClientSession,
+#     available_tools: List[Dict[str, Any]],
+#     messages_history: List[Dict[str, Any]],
+#     final_text_output_list: List[str]
+# ):
+#     # ... (logic moved to ADKOrchestrator.handle_user_query inner loop) ...
+#     pass
+
+# async def process_query_logic(
+#     query: str,
+#     anthropic_client: Anthropic,
+#     mcp_session: ClientSession,
+#     available_tools: List[Dict[str, Any]],
+#     incoming_messages_history: List[Dict[str, Any]]
+# ) -> Tuple[str, List[Dict[str, Any]]]:
+#     # ... (logic moved to ADKOrchestrator.handle_user_query) ...
+#     pass
+
+# ADK_LLM_REFACTOR: `get_available_tools` has been moved to adk_orchestrator.py
+# as `get_available_tools_for_adk`.
+# async def get_available_tools(mcp_session: ClientSession) -> List[Dict[str, Any]]:
+#     # ... (logic moved) ...
+#     pass
+
+
+# The MCPClient class is now significantly reduced. Its primary role in WebSocket
+# handling has been taken over by ADKOrchestrator.
+# It might still be useful for direct CLI testing or other non-ADK orchestrated scenarios,
+# but its core methods (chat_loop, process_query) are no longer central to the main app.
+
 class MCPClient:
     def __init__(self, websocket=None):
-        # Initialize session and client objects
         self.session: Optional[ClientSession] = None
         self.exit_stack = AsyncExitStack()
-        # Get Anthropic API key from environment variables or allow it to be passed
         self.anthropic_api_key = os.environ.get("ANTHROPIC_API_KEY")
-        self.anthropic = Anthropic(api_key=self.anthropic_api_key)
         self.websocket = websocket
-    # methods will go here
 
     async def connect_to_server(self, server_script_path: str):
-        """Connect to an MCP server
-
-        Args:
-            server_script_path: Path to the server script (.py or .js)
-        """
+        """Connect to an MCP server."""
         is_python = server_script_path.endswith('.py')
         is_js = server_script_path.endswith('.js')
         if not (is_python or is_js):
@@ -43,172 +74,48 @@ class MCPClient:
         )
 
         stdio_transport = await self.exit_stack.enter_async_context(stdio_client(server_params))
-        self.stdio, self.write = stdio_transport
-        self.session = await self.exit_stack.enter_async_context(ClientSession(self.stdio, self.write))
+        stdio_reader, stdio_writer = stdio_transport
+        self.session = await self.exit_stack.enter_async_context(ClientSession(stdio_reader, stdio_writer))
 
         await self.session.initialize()
-
-        # List available tools
-        response = await self.session.list_tools()
-        tools = response.tools
-        print("\\nConnected to server with tools:", [tool.name for tool in tools])
-
-    async def process_response(self, claude_response_obj, available_tools, messages_history, final_text_output_list):
-        """
-        Processes a single response object from Claude.
-        Updates messages_history and final_text_output_list.
-        Handles tool calls and recursively processes subsequent responses.
-        """
-        current_assistant_blocks = []  # Blocks for the current claude_response_obj
-
-        for content_block in claude_response_obj.content:
-            if content_block.type == 'text':
-                final_text_output_list.append(content_block.text)
-                current_assistant_blocks.append(content_block)
-            elif content_block.type == 'tool_use':
-                # Add any preceding text and this tool_use block to current_assistant_blocks
-                current_assistant_blocks.append(content_block)
-                
-                # Append the assistant message (text + tool_use) to history
-                if current_assistant_blocks: # Ensure there's something to append
-                    messages_history.append({
-                        "role": "assistant",
-                        "content": list(current_assistant_blocks) # Make a copy
-                    })
-                # Clear current_assistant_blocks as it's now part of messages_history for this turn
-                current_assistant_blocks = [] 
-                
-                tool_name = content_block.name
-                tool_args = content_block.input
-                
-                print(f"Calling tool: {tool_name} with args: {tool_args}") # Added for debugging
-                result = await self.session.call_tool(tool_name, tool_args)
-                final_text_output_list.append(f"[Calling tool {tool_name} with args {tool_args}]")
-                print(f"Tool {tool_name} result: {result.content}") # Added for debugging
-
-                # Append tool result to messages history
-                messages_history.append({
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": content_block.id,
-                            "content": result.content # Assuming result.content is a string or suitable structure
-                        }
-                    ]
-                })
-
-                # Get next response from Claude
-                next_claude_response_obj = self.anthropic.messages.create(
-                    model="claude-3-5-sonnet-20240620", 
-                    max_tokens=1000,
-                    messages=messages_history, # Pass the full history
-                    tools=available_tools
-                )
-                
-                # Recursively process the new response
-                await self.process_response(next_claude_response_obj, available_tools, messages_history, final_text_output_list)
-                
-                return # After a tool cycle and recursion, this path of process_response is done.
-
-        # If the loop finished and current_assistant_blocks has content, 
-        # it means this claude_response_obj consisted of only text blocks (or was empty).
-        # This assistant message needs to be added to history.
-        if current_assistant_blocks:
-            messages_history.append({
-                "role": "assistant",
-                "content": current_assistant_blocks
-            })
-
-    async def process_query(self, query: str) -> str:
-        """Process a query using Claude and available tools"""
-        messages = [
-            {
-                "role": "user",
-                "content": query
-            }
-        ]
-
-        response = await self.session.list_tools()
-        available_tools = [{
-            "name": tool.name,
-            "description": tool.description,
-            "input_schema": tool.inputSchema
-        } for tool in response.tools]
-
-        # Initial Claude API call
-        claude_response = self.anthropic.messages.create(
-            model="claude-3-5-sonnet-20240620", 
-            max_tokens=1000,
-            messages=messages, # This is the initial user message
-            tools=available_tools
-        )
-
-        final_text = []
-        # `messages` (the history) will be mutated by process_response
-        await self.process_response(claude_response, available_tools, messages, final_text)
-        
-        # Final response processing
-        print(f"Final message history: {messages}") # Added for debugging
-        return "\\n".join(final_text)
+        if self.session:
+            response = await self.session.list_tools()
+            tools = response.tools
+            print("MCPClient: Connected to server with tools:", [tool.name for tool in tools])
+        else:
+            print("MCPClient: Session not initialized after connect_to_server.")
     
-    async def chat_loop(self):
-        """Run an interactive chat loop using websocket for I/O"""
-        if not self.websocket:
-            print("Websocket not initialized. Cannot start chat loop.")
-            return
-
-        print("\nMCP Client Started! Waiting for queries via websocket.")
-        await self.websocket.send_text("MCP Client Ready. Send your queries or 'quit' to exit.")
-
-        try:
-            while True:
-                query = await self.websocket.receive_text()
-                query = query.strip()
-                llm_response = validate_data_with_claude(query, self.anthropic_api_key)
-                if not conforms_to_guidelines(llm_response):
-                    await self.websocket.send_text("I'm sorry, but my primary function is to support you with inquiries about Zededa Inc and its services. Can I help  with a Zededa related question?")
-                    break
-
-                if query.lower() == 'quit':
-                    await self.websocket.send_text("Exiting chat loop.")
-                    break
-
-                response_text = await self.process_query(query)
-                await self.websocket.send_text(response_text)
-
-        except Exception as e: # Catch WebSocketDisconnect or other errors
-            print(f"\nWebsocket Error or Disconnection: {str(e)}")
-            # Optionally send a final message if the websocket is still partially open
-            try:
-                await self.websocket.send_text(f"Error: {str(e)}")
-            except Exception:
-                pass # Ignore if sending fails
-        finally:
-            print("Chat loop ended.")
-
-
     async def cleanup(self):
         """Clean up resources"""
+        print("MCPClient: Cleaning up resources...")
         await self.exit_stack.aclose()
+        print("MCPClient: Resources cleaned up.")
 
-async def main():
-    # This main function is for CLI usage of the client.
-    # It requires sys module to be imported.
+async def main_cli_usage():
+    # ADK_LLM_REFACTOR: This CLI mode is now largely non-functional without
+    # `process_query_logic` and `get_available_tools` being available here.
+    # To make it work, it would need to instantiate ADKOrchestrator or
+    # replicate its logic, which is beyond the current scope.
+    print("CLI Usage Note: This mode is currently non-functional due to LLM logic refactoring.")
+    print("The core LLM interaction logic has been moved into ADKOrchestrator.")
     import sys 
     if len(sys.argv) < 2:
-        print("Usage: python client.py <path_to_server_script>")
+        print("Usage: python zededa_server_app/agent.py <path_to_server_script>")
         sys.exit(1)
 
+    print(f"Attempting to connect to server: {sys.argv[1]} for basic MCPClient test.")
     client = MCPClient()
     try:
         await client.connect_to_server(sys.argv[1])
-        # The original main function didn't call chat_loop as it's websocket-based.
-        # If CLI interaction is needed, it would require a different loop.
-        print("Connected to server. CLI interaction mode not fully implemented in this version of main().")
+        if client.session:
+            print("MCPClient connected. Further CLI interaction for LLM calls is disabled in this refactored version.")
+        else:
+            print("Failed to connect MCPClient session for CLI.")
+    except Exception as e:
+        print(f"CLI Error with MCPClient: {e}")
     finally:
         await client.cleanup()
 
+
 if __name__ == "__main__":
-    import sys # Ensure sys is available for the script execution context
-    asyncio.run(main())
+    asyncio.run(main_cli_usage())

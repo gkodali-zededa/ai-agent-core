@@ -2,13 +2,14 @@ import asyncio
 import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 import os
-import logging  # Import the logging module
+import logging
 
-# MCPClient is now imported from the local client.py within this package
-from .agent import MCPClient
+# Import ADKOrchestrator instead of MCPClient
+from .adk_orchestrator import ADKOrchestrator
+# MCPClient might still be needed if there are other non-websocket uses,
+# but for the /ws endpoint, ADKOrchestrator is primary.
+# from .agent import MCPClient
 
-# Configure basic logging
-# You can customize the format and level further if needed
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
@@ -21,62 +22,69 @@ async def health_check():
     """
     return {"status": "ok"}
 
-# hardcode the container_server_script_path for now
 # This path is relative to the CWD when the server is run.
 # If running `uvicorn zededa_server_app.main:app` from the project root,
-# "zededa.py" will correctly point to /Users/gkodali/Work/zededa-client/zededa.py
-container_server_script_path = "zededa.py"  # In Docker, this will be /app/zededa.py
+# "zededa.py" will correctly point to the zededa.py in the root.
+# In Docker, this will be /app/zededa.py if WORKDIR is /app
+container_server_script_path = "zededa.py"
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     
-    # Ensure the container_server_script_path is valid and exists
-    # Inside Docker, paths should be absolute or relative to WORKDIR /app
-    if not os.path.exists(container_server_script_path) or not (container_server_script_path.endswith('.py') or container_server_script_path.endswith('.js')):
-        logger.error(f"Invalid or non-existent server script path: {container_server_script_path}")
-        await websocket.send_text(f"Error: Invalid or non-existent server script path: {container_server_script_path}")
-        await websocket.close(code=1008)  # Policy Violation
+    anthropic_api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not anthropic_api_key:
+        logger.error("ANTHROPIC_API_KEY not set in environment.")
+        await websocket.send_text("Error: Server configuration issue (ANTHROPIC_API_KEY missing).")
+        await websocket.close(code=1008)
         return
 
-    client = MCPClient(websocket=websocket)
+    # Ensure the container_server_script_path is valid and exists
+    # This check should ideally be done at startup if the path is static.
+    current_dir = os.getcwd()
+    absolute_script_path = os.path.abspath(os.path.join(current_dir, container_server_script_path))
+    logger.info(f"Looking for MCP server script at: {absolute_script_path} (from CWD: {current_dir})")
+
+    if not os.path.exists(absolute_script_path):
+        logger.error(f"Invalid or non-existent server script path: {absolute_script_path}")
+        await websocket.send_text(f"Error: Tool server script not found at {absolute_script_path}")
+        await websocket.close(code=1008)
+        return
+
+    # Use ADKOrchestrator
+    orchestrator = ADKOrchestrator(websocket=websocket, anthropic_api_key=anthropic_api_key)
     
     try:
-        logger.info(f"Attempting to connect to MCP server: {container_server_script_path}")
-        await client.connect_to_server(container_server_script_path)
-        # chat_loop will now use the websocket passed during MCPClient initialization
-        await client.chat_loop()
+        logger.info(f"Attempting to connect to MCP server with ADKOrchestrator: {absolute_script_path}")
+        # Pass the absolute path to connect_to_mcp_server
+        await orchestrator.connect_to_mcp_server(absolute_script_path)
+
+        await orchestrator.chat_loop() # ADKOrchestrator's chat loop
+
     except WebSocketDisconnect:
-        logger.info(f"Client disconnected from WebSocket for {container_server_script_path}")
+        logger.info(f"Client disconnected from WebSocket (ADKOrchestrator for {absolute_script_path})")
     except Exception as e:
-        logger.error(f"An error occurred with client for {container_server_script_path}: {e}", exc_info=True)
-        # It's good practice to avoid sending detailed internal errors to the client.
-        # Consider logging 'e' and sending a generic error message.
-        await websocket.send_text(f"Server-side error. Please check server logs.")
-    finally:
-        logger.info(f"Cleaning up client for {container_server_script_path}")
-        await client.cleanup()
-        # Ensure websocket is closed if not already
+        logger.error(f"An error occurred with ADKOrchestrator for {absolute_script_path}: {e}", exc_info=True)
         try:
-            # Check state before attempting to close, or catch specific exception for already closed.
+            await websocket.send_text(f"Server-side error. Please check server logs.")
+        except Exception: # Websocket might already be closed
+            pass
+    finally:
+        logger.info(f"Cleaning up ADKOrchestrator for {absolute_script_path}")
+        await orchestrator.cleanup()
+        try:
             if websocket.client_state != websocket.client_state.DISCONNECTED:
                  await websocket.close()
-        except RuntimeError:  # Can happen if already closed or in an invalid state
+        except RuntimeError:
             pass
-        logger.info(f"WebSocket connection closed for {container_server_script_path}")
+        logger.info(f"WebSocket connection closed (ADKOrchestrator for {absolute_script_path})")
 
 if __name__ == "__main__":
-    # To run this FastAPI application:
-    # 1. Navigate to the project root directory in your terminal:
-    #    cd /Users/gkodali/Work/zededa-client
-    # 2. Run uvicorn:
-    #    uvicorn zededa_server_app.main:app --reload --port 8000
-    #
-    # The container_server_script_path is hardcoded above.
-    # Clients connect to ws://<host>:<port>/ws
-    logger.info("FastAPI server starting directly (not recommended for production). To run for development, use the command:")
-    logger.info("uvicorn zededa_server_app.main:app --reload --port 8000")
-    logger.info(f"Ensure '{container_server_script_path}' (resolved to '{os.path.abspath(container_server_script_path)}') is accessible.")
-    # The following line allows direct execution `python zededa_server_app/main.py` from the root,
-    # but `uvicorn zededa_server_app.main:app` is the standard for development/production.
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    logger.info("FastAPI server starting directly (uvicorn zededa_server_app.main:app --reload --port 8000 for dev)")
+    logger.info(f"Tool server script path: '{container_server_script_path}' (resolved to '{os.path.abspath(container_server_script_path)}')")
+
+    # Check for ANTHROPIC_API_KEY at startup when running directly
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        logger.error("ANTHROPIC_API_KEY environment variable not set. Please set it before running.")
+    else:
+        uvicorn.run(app, host="0.0.0.0", port=8000)
